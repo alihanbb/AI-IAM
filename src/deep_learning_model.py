@@ -38,7 +38,7 @@ class DeepLearningAnomalyDetector:
             else:
                 raise FileNotFoundError(f"Veri dosyası bulunamadı: {self.data_path}")
                 
-        self.df = pd.read_csv(self.data_path, sep=';')
+        self.df = pd.read_csv(self.data_path, sep=',')
         self.df['CreatedAt'] = pd.to_datetime(self.df['CreatedAt'])
         
         print(f"✅ Veri yüklendi: {len(self.df)} kayıt")
@@ -54,7 +54,7 @@ class DeepLearningAnomalyDetector:
             print("✅ Risk skorları hesaplandı.")
         
         # Hibrit etiketleme uygula (eğer yoksa)
-        if 'HybridLabel' not in self.df.columns:
+        if   'HybridLabel' not in self.df.columns:
             print("🏷️ Hibrit etiketleme uygulanıyor...")
             from labeling_methods import LabelingMethods
             
@@ -309,7 +309,7 @@ def main():
     
     # Model oluştur ve eğit
     try:
-        dl_model = DeepLearningAnomalyDetector("Data/mock_login_month_5000.csv")
+        dl_model = DeepLearningAnomalyDetector("Data/login_logs_3_months_25000_rows.csv")
         
         # Veriyi hazırla
         dl_model.load_and_prepare_data()
