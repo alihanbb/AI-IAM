@@ -219,97 +219,89 @@ class LabelingMethods:
         
         return self.df['HybridLabel']
     
-#     def apply_all_methods(self):
-#         """
-#         Tüm etiketleme yöntemlerini uygula ve karşılaştır
-#         """
-#         print("🔄 Tüm etiketleme yöntemleri uygulanıyor...\n")
-        
-#         # Tüm yöntemleri uygula
-#         self.quartile_labeling()
-#         print()
-#         self.realistic_labeling()
-#         print()
-#         self.rule_based_labeling()
-#         print()
-#         self.temporal_pattern_labeling()
-#         print()
-#         self.hybrid_labeling()
-#         print()
-        
-#         # Karşılaştırma tablosu
-#         print("📊 ETIKETLEME YÖNTEMLERİ KARŞILAŞTIRMASI")
-#         print("="*60)
-        
-#         methods = ['QuartileLabel', 'RealisticLabel', 'RuleBasedLabel', 
-#                   'TemporalLabel', 'HybridLabel']
-        
-#         comparison_df = pd.DataFrame()
-        
-#         for method in methods:
-#             if method in self.df.columns:
-#                 dist = self.df[method].value_counts(normalize=True) * 100
-#                 comparison_df[method] = dist
-        
-#         comparison_df = comparison_df.fillna(0).round(1)
-#         print(comparison_df)
-        
-#         # Önerilen yöntem
-#         print("\n🎯 ÖNERİLEN YÖNTEM: HybridLabel")
-#         print("Sebep: Güvenlik odaklı + temporal pattern + domain knowledge")
-        
-#         return self.df
-    
-#     def get_best_labels(self):
-#         """En iyi performans gösteren etiketleri döndür"""
-#         if 'HybridLabel' not in self.df.columns:
-#             self.hybrid_labeling()
-        
-#         return self.df['HybridLabel']
-    
-#     def export_labeled_data(self, filename=None):
-#         """Etiketlenmiş veriyi export et"""
-#         if filename is None:
-#             filename = f"labeled_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
-#         # Sadece gerekli kolonları seç
-#         export_columns = ['UserId', 'CreatedAt', 'RiskScore']
-        
-#         # Mevcut etiket kolonlarını ekle
-#         label_columns = [col for col in self.df.columns if 'Label' in col]
-#         export_columns.extend(label_columns)
-        
-#         export_df = self.df[export_columns].copy()
-#         export_df.to_csv(filename, index=False, sep=';')
-#         print(f"✅ Etiketlenmiş veri {filename} dosyasına kaydedildi.")
-        
-#         return filename
+    def calculate_risk_score(self):
+        df = self.df.copy()
+        # Zaman anomalisi
+        if 'CreatedAt' in df.columns:
+            df['CreatedAt'] = pd.to_datetime(df['CreatedAt'], errors='coerce')
+            hours = df['CreatedAt'].dt.hour.fillna(0)
+            mean_hour = df.groupby('UserId')['CreatedAt'].transform(lambda x: x.dt.hour.mean()).fillna(0)
+            df['risk_time'] = (abs(hours - mean_hour) / 24).clip(0, 1)
+        else:
+            df['risk_time'] = 0.0
 
-# def main():
-#     """Test ve demo amaçlı main fonksiyon"""
-#     print("🏷️ ETİKETLEME YÖNTEMLERİ DEMO")
-#     print("="*50)
-    
-#     # Örnek veri yükle (gerçek uygulamada farklı dosya kullanılır)
-#     try:
-#         df = pd.read_csv("../Data/mock_login_month_5000_full_risk_analysis.csv", sep=';')
-#         print(f"✅ Veri yüklendi: {len(df)} kayıt")
-        
-#         # Etiketleme objesi oluştur
-#         labeler = LabelingMethods(df)
-        
-#         # Tüm yöntemleri test et
-#         labeled_data = labeler.apply_all_methods()
-        
-#         # Sonucu kaydet
-#         output_file = labeler.export_labeled_data()
-        
-#         print(f"\n🎉 Etiketleme tamamlandı!")
-#         print(f"📁 Çıktı dosyası: {output_file}")
-        
-#     except FileNotFoundError:
-#         print("❌ Veri dosyası bulunamadı.")
-#         print("💡 Önce risk skoru hesaplaması yapılmalı.")
+        # MFA değişimi
+        if 'MFAMethod' in df.columns:
+            primary_mfa = df.groupby('UserId')['MFAMethod'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_mfa'] = (df['MFAMethod'] != primary_mfa).astype(float).fillna(0)
+        else:
+            df['risk_mfa'] = 0.0
 
-# if __name__ == "__main__":
-#     main()
+        # Browser değişimi
+        if 'Browser' in df.columns:
+            primary_browser = df.groupby('UserId')['Browser'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_browser'] = (df['Browser'] != primary_browser).astype(float).fillna(0)
+        else:
+            df['risk_browser'] = 0.0
+
+        # OS değişimi
+        if 'OS' in df.columns:
+            primary_os = df.groupby('UserId')['OS'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_os'] = (df['OS'] != primary_os).astype(float).fillna(0)
+        else:
+            df['risk_os'] = 0.0
+
+        # IP değişimi: statik/en çok kullanılan IP ile normalize
+        if 'ClientIP' in df.columns:
+            ip_counts = df.groupby(['UserId', 'ClientIP']).size().groupby('UserId').idxmax()
+            most_used_ip = df['UserId'].map(lambda uid: ip_counts.get(uid, np.nan)[1] if uid in ip_counts else np.nan)
+            static_ip = df.groupby('UserId')['ClientIP'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_ip'] = df.apply(
+                lambda row: 0 if row['ClientIP'] == static_ip[row.name] or row['ClientIP'] == most_used_ip[row.name] else 1,
+                axis=1
+            )
+        else:
+            df['risk_ip'] = 0.0
+
+        # Location değişimi
+        if 'Unit' in df.columns:
+            primary_location = df.groupby('UserId')['Unit'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_location'] = (df['Unit'] != primary_location).astype(float).fillna(0)
+        else:
+            df['risk_location'] = 0.0
+
+        # Unit değişimi
+        if 'Unit' in df.columns:
+            primary_unit = df.groupby('UserId')['Unit'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_unit'] = (df['Unit'] != primary_unit).astype(float).fillna(0)
+        else:
+            df['risk_unit'] = 0.0
+
+        # Title değişimi
+        if 'Title' in df.columns:
+            primary_title = df.groupby('UserId')['Title'].transform(lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan)
+            df['risk_title'] = (df['Title'] != primary_title).astype(float).fillna(0)
+        else:
+            df['risk_title'] = 0.0
+
+        # Diğer feature'lar için örnek (eksikse 0)
+        for col in ['SessionDuration', 'FailedAttempts']:
+            if col in df.columns:
+                df[f'risk_{col.lower()}'] = pd.to_numeric(df[col], errors='coerce').fillna(0).clip(0, 1)
+            else:
+                df[f'risk_{col.lower()}'] = 0.0
+
+        # Tüm risk feature'larını ağırlıklı topla
+        weights = {
+            'risk_time': 0.13, 'risk_mfa': 0.12, 'risk_browser': 0.11, 'risk_os': 0.10,
+            'risk_ip': 0.13, 'risk_location': 0.10, 'risk_unit': 0.09, 'risk_title': 0.07,
+            'risk_sessionduration': 0.08, 'risk_failedattempts': 0.07
+        }
+        score = np.zeros(len(df), dtype=float)
+        total_w = sum(weights.values()) or 1.0
+        for col, w in weights.items():
+            if col in df.columns:
+                vals = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(float)
+                score += vals * w
+        df['RiskScore'] = (score / total_w) * 100
+        return df

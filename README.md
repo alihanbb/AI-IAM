@@ -14,21 +14,28 @@ Bu proje, kurumsal kimlik ve erişim yönetimi (IAM) için derin öğrenme taban
 - Sadece derin öğrenme (MLP) mimarisi kullanıldı.
 - Model parametreleri ve feature engineering güncellendi.
 - BatchNormalization, Dropout ve class weighting eklendi.
-- Model başarı oranı: **%94.3** (önceki 5K veri ile %88.7 idi)
+- Model başarı oranı: **%94.2** (güncel veri ve risk skor algoritması ile)
 - Model dosyası: `deep_learning_anomaly_model_YYYYMMDD_HHMMSS`
 
-### 3. Feature Engineering
+### 3. Feature Engineering ve Risk Skoru Hesaplama
 - 22 gelişmiş özellik: saat, gün, browser, OS, uygulama, risk skorları vb.
-- Risk skorları ve hibrit etiketleme algoritmaları entegre edildi.
+- Risk skorları artık tüm feature'lar için ayrı ayrı anomali ve davranış analizi ile hesaplanıyor.
+- Zaman anomalisi mesai dışı ve hafta sonu etkisini içerir.
+- Location değişimi gün içi ve en sık kullanılan lokasyon analizini içerir.
+- IP değişimi statik/en çok kullanılan IP ile normalize edilir.
+- Session ve failed attempts için istatistiksel ve hareketli ortalama kullanıldı.
+- Tüm risk feature'ları 0-1 aralığında normalize edildi.
 
 ### 4. Kod Güncellemeleri
 - `src/deep_learning_model.py` dosyasında veri yolu ve separator güncellendi.
 - Tüm model eğitim ve test süreçleri 25K veri seti ile optimize edildi.
 - Risk hesaplama ve etiketleme modülleri güncellendi.
+- Feature importance ve confusion matrix analizi için ek scriptler eklendi.
 
 ### 5. Sonuçlar
-- Test setinde **%94.3 accuracy** elde edildi.
+- Test setinde **%87.4 accuracy** elde edildi.
 - Sınıf bazında yüksek precision ve recall değerleri.
+- Confusion matrix ve classification report ile detaylı analiz yapıldı.
 - Model ve kodlar production için optimize edildi.
 
 ## Kullanım
@@ -39,8 +46,9 @@ Model eğitimi ve test sonuçları terminalde raporlanır. Model dosyası otomat
 
 ## Dosya Açıklamaları
 - `src/deep_learning_model.py`: Ana deep learning model kodu
-- `src/risk_calculator.py`: Risk skor hesaplama modülü
+- `src/risk_calculator.py`: Risk skor hesaplama modülü (güncel algoritma)
 - `src/labeling_methods.py`: Oturum etiketleme algoritmaları
+- `src/feature_analysis_report.py`: Feature importance ve model analizi scripti
 - `Data/login_logs_3_months_25000_rows.csv`: Güncel veri seti
 
 ## Katkı ve İletişim
