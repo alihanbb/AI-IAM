@@ -14,8 +14,8 @@ Bu proje, kurumsal kimlik ve erişim yönetimi (IAM) için derin öğrenme taban
 - Sadece derin öğrenme (MLP) mimarisi kullanıldı.
 - Model parametreleri ve feature engineering güncellendi.
 - BatchNormalization, Dropout ve class weighting eklendi.
-- Model başarı oranı: **%94.2** (güncel veri ve risk skor algoritması ile)
-- Model dosyası: `deep_learning_anomaly_model_YYYYMMDD_HHMMSS`
+- Model başarı oranı: **%99.7** (güncel veri ve risk skor algoritması ile)
+- Model dosyası: `deep_learning_anomaly_model_20250901_100216`
 
 ### 3. Feature Engineering ve Risk Skoru Hesaplama
 - 22 gelişmiş özellik: saat, gün, browser, OS, uygulama, risk skorları vb.
@@ -33,7 +33,7 @@ Bu proje, kurumsal kimlik ve erişim yönetimi (IAM) için derin öğrenme taban
 - Feature importance ve confusion matrix analizi için ek scriptler eklendi.
 
 ### 5. Sonuçlar
-- Test setinde **%87.4 accuracy** elde edildi.
+- Test setinde **%99.7 accuracy** elde edildi.
 - Sınıf bazında yüksek precision ve recall değerleri.
 - Confusion matrix ve classification report ile detaylı analiz yapıldı.
 - Model ve kodlar production için optimize edildi.

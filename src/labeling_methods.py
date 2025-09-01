@@ -1,205 +1,186 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import warnings
+
 warnings.filterwarnings('ignore')
 
 class LabelingMethods:
 
     def __init__(self, df):
         self.df = df.copy()
-        self.prepare_data()
+        self._check_required_columns()
+
+    def _check_required_columns(self):
+        """Etiketleme için gerekli sütunların varlığını kontrol eder."""
+        required_cols = ['CreatedAt', 'RiskScore', 'risk_time_anomaly', 'risk_device_change', 
+                         'risk_mfa_change', 'risk_app_change', 'risk_ip_change', 
+                         'risk_unit_change', 'risk_title_change']
+        for col in required_cols:
+            if col not in self.df.columns:
+                print(f"⚠️'{col}' sütunu bulunamadı. Etiketleme bazı özelliklerden yoksun olacak.")
+
+    def _prepare_temporal_features(self, df):
+        """Zamansal özellikleri etiketleme için hazırlar."""
+        temp_df = df.copy()
+        if 'CreatedAt' in temp_df.columns:
+            temp_df['CreatedAt'] = pd.to_datetime(temp_df['CreatedAt'])
+            temp_df['hour'] = temp_df['CreatedAt'].dt.hour
+            temp_df['weekday'] = temp_df['CreatedAt'].dt.weekday
+            # Mesai saatlerini belirle (örnek olarak 9:00 - 18:00 arası)
+            temp_df['is_work_hours'] = ((temp_df['hour'] >= 9) & (temp_df['hour'] <= 18)).astype(int)
+        return temp_df
     
-    def prepare_data(self):
-        """Veriyi etiketleme için hazırla"""
-        # Datetime dönüşümü
-        if 'CreatedAt' in self.df.columns:
-            self.df['CreatedAt'] = pd.to_datetime(self.df['CreatedAt'])
-        
-        # Risk skorunun var olup olmadığını kontrol et
-        # if 'RiskScore' not in self.df.columns:
-        #     print("⚠️ RiskScore bulunamadı. Önce risk skoru hesaplaması yapılmalı.")
     def realistic_labeling(self):
         print("🎯 Yöntem 1: Gerçekçi Etiketleme uygulanıyor...")
         
-        # Gerçekçi eşikler (domain knowledge bazlı)
-        # %5 kritik, %10 riskli, %25 normal, %60 düşük
-        q1 = self.df['RiskScore'].quantile(0.05)  # Alt %5 kritik
-        q2 = self.df['RiskScore'].quantile(0.15)  # Alt %15 riskli  
-        q3 = self.df['RiskScore'].quantile(0.40)  # Alt %40 normal
+        if 'RiskScore' not in self.df.columns:
+            return pd.Series(['normal'] * len(self.df))
+        
+        # Quantile eşikleri ile gerçekçi dağılım
+        quantiles = self.df['RiskScore'].quantile([0.07, 0.18, 0.40])
+        q_critical, q_risky, q_normal = quantiles.values
         
         def assign_realistic_label(score):
-            if score <= q1:
-                return 'kritik'
-            elif score <= q2:
-                return 'riskli'
-            elif score <= q3:
-                return 'normal'
-            else:
+            if score <= q_critical:
                 return 'düşük'
+            elif score <= q_risky:
+                return 'normal'
+            elif score <= q_normal:
+                return 'riskli'
+            else:
+                return 'kritik'
         
         self.df['RealisticLabel'] = self.df['RiskScore'].apply(assign_realistic_label)
         
-        # Dağılımı göster
         distribution = self.df['RealisticLabel'].value_counts(normalize=True) * 100
         print("Dağılım:")
         for label, percentage in distribution.items():
-            print(f"  {label}: %{percentage:.1f}")
-        
+            print(f"    {label}: %{percentage:.1f}")
+            
         return self.df['RealisticLabel']
-    
+
     def rule_based_labeling(self):
         print("🔧 Yöntem 2: Kural Bazlı Etiketleme uygulanıyor...")
         
-        def assign_rule_based_label(row):
-            # Saat bilgisini al
-            hour = row['CreatedAt'].hour if 'CreatedAt' in row and pd.notna(row['CreatedAt']) else 12
+        # Risk faktörlerine ağırlık vererek daha nüanslı bir kural tabanlı skorlama
+        def assign_rule_based_score(row):
+            score = 0
+            # Ağırlıklar: IP/MFA Değişimi > Diğer Değişimler > Zamansal Anomali
+            if row.get('risk_ip_change', 0) > 0.5:
+                score += 3
+            if row.get('risk_mfa_change', 0) > 0.5:
+                score += 3
+            if row.get('risk_app_change', 0) > 0.5:
+                score += 1
+            if row.get('risk_device_change', 0) > 0.5:
+                score += 1
+            if row.get('risk_time_anomaly', 0) > 0.5:
+                score += 2
             
-            # Hafta sonu kontrolü
-            is_weekend = row['CreatedAt'].weekday() >= 5 if 'CreatedAt' in row and pd.notna(row['CreatedAt']) else False
+            # Kritik kombinasyonlar
+            if row.get('risk_ip_change', 0) > 0.5 and row.get('risk_time_anomaly', 0) > 0.5:
+                score += 2
             
-            # Risk faktörlerini kontrol et
-            high_risk_factors = 0
-            
-            # Zaman riskleri
-            if hour < 6 or hour > 22:  # Gece saatleri
-                high_risk_factors += 2
-            elif hour < 8 or hour > 18:  # Mesai dışı
-                high_risk_factors += 1
-                
-            if is_weekend:
-                high_risk_factors += 1
-            
-            # Teknik risk faktörleri
-            risk_columns = [
-                'risk_subnet_change', 'risk_device_change', 
-                'risk_mfa_change', 'risk_app_change'
-            ]
-            
-            for col in risk_columns:
-                if col in row and row[col] > 0.5:
-                    high_risk_factors += 1
-            
-            # Çoklu risk kombinasyonları (kritik durumlar)
-            if high_risk_factors >= 4:
+            return score
+
+        self.df['RuleBasedScore'] = self.df.apply(assign_rule_based_score, axis=1)
+
+        def assign_label(score):
+            if score >= 6:
                 return 'kritik'
-            elif high_risk_factors >= 2:
+            elif score >= 3:
                 return 'riskli'
-            elif high_risk_factors == 1:
+            elif score >= 1:
                 return 'normal'
             else:
                 return 'düşük'
         
-        self.df['RuleBasedLabel'] = self.df.apply(assign_rule_based_label, axis=1)
-        
-        # Dağılımı göster
+        self.df['RuleBasedLabel'] = self.df['RuleBasedScore'].apply(assign_label)
+
         distribution = self.df['RuleBasedLabel'].value_counts(normalize=True) * 100
         print("Dağılım:")
         for label, percentage in distribution.items():
-            print(f"  {label}: %{percentage:.1f}")
-        
+            print(f"    {label}: %{percentage:.1f}")
         return self.df['RuleBasedLabel']
     
     def temporal_pattern_labeling(self):
-        print("⏰ Yöntem 3: Temporal Pattern Etiketleme uygulanıyor...")
+        print("⏰ Yöntem 3: Zamansal Kalıp Etiketleme uygulanıyor...")
+
+        # Önceden hazırlanmış zamansal özellikleri DataFrame'e ekle
+        self.df = self._prepare_temporal_features(self.df)
+
+        # Mesai saatleri dışındaki girişlere risk puanı ekleme
+        def assign_temporal_score(row):
+            score = 0
+            # Mesai saatleri dışındaki girişler için puanlama (9:00-18:00)
+            if row.get('is_work_hours', 1) == 0:
+                score += 1 # Mesai saati dışında olduğu için 1 puan
+            
+            # Hafta sonu girişleri için ek puan (hafta içi = 0, hafta sonu = 1)
+            if row.get('weekday', 0) >= 5:
+                 score += 1 # Hafta sonu olduğu için ek 1 puan
+            
+            # Zaman anomali skoru (Z-Skor) ile birleştirme
+            time_anomaly_score = row.get('risk_time_anomaly', 0)
+            score += time_anomaly_score * 2 # Zamansal sapmanın etkisi daha yüksek
+            
+            return score
+
+        self.df['TemporalScore'] = self.df.apply(assign_temporal_score, axis=1)
         
-        # Kullanıcı bazında temporal analiz
-        user_patterns = {}
-        
-        for user_id in self.df['UserId'].unique():
-            user_data = self.df[self.df['UserId'] == user_id].copy()
-            
-            if len(user_data) > 1:
-                # Kullanıcının normal giriş saatleri
-                hour_mean = user_data['CreatedAt'].dt.hour.mean()
-                hour_std = user_data['CreatedAt'].dt.hour.std()
-                
-                # Kullanıcının normal gün kalıbı
-                weekday_rate = (user_data['CreatedAt'].dt.weekday < 5).mean()
-                
-                user_patterns[user_id] = {
-                    'hour_mean': hour_mean,
-                    'hour_std': max(hour_std, 1),  # Minimum 1 saat sapma
-                    'weekday_rate': weekday_rate
-                }
-        
-        def assign_temporal_label(row):
-            user_id = row['UserId']
-            current_hour = row['CreatedAt'].hour if pd.notna(row['CreatedAt']) else 12
-            is_weekday = row['CreatedAt'].weekday() < 5 if pd.notna(row['CreatedAt']) else True
-            
-            if user_id not in user_patterns:
-                return 'normal'  # Yeni kullanıcı
-            
-            pattern = user_patterns[user_id]
-            
-            # Saat sapması kontrolü
-            hour_deviation = abs(current_hour - pattern['hour_mean']) / pattern['hour_std']
-            
-            # Gün kalıbı kontrolü
-            day_anomaly = 0
-            if is_weekday and pattern['weekday_rate'] < 0.3:  # Hafta sonu çalışanı weekday'de
-                day_anomaly = 1
-            elif not is_weekday and pattern['weekday_rate'] > 0.8:  # Weekday çalışanı weekend'de
-                day_anomaly = 1
-            
-            # Temporal risk skoru
-            temporal_risk = hour_deviation + day_anomaly
-            
-            if temporal_risk > 3:
+        def assign_temporal_label(score):
+            if score >= 3:
                 return 'kritik'
-            elif temporal_risk > 2:
+            elif score >= 2:
                 return 'riskli'
-            elif temporal_risk > 1:
+            elif score >= 1:
                 return 'normal'
             else:
                 return 'düşük'
         
-        self.df['TemporalLabel'] = self.df.apply(assign_temporal_label, axis=1)
+        self.df['TemporalLabel'] = self.df['TemporalScore'].apply(assign_temporal_label)
         
-        # Dağılımı göster
         distribution = self.df['TemporalLabel'].value_counts(normalize=True) * 100
         print("Dağılım:")
         for label, percentage in distribution.items():
-            print(f"  {label}: %{percentage:.1f}")
+            print(f"    {label}: %{percentage:.1f}")
         
         return self.df['TemporalLabel']
-    
+
     def hybrid_labeling(self):
         print("🧠 Yöntem 4: Hibrit Etiketleme uygulanıyor...")
         
-        # Önce diğer yöntemleri uygula
-        realistic_labels = self.realistic_labeling()
-        rule_labels = self.rule_based_labeling()
-        temporal_labels = self.temporal_pattern_labeling()
+        # Önce bağımsız etiketleme yöntemlerini uygula
+        self.realistic_labeling()
+        self.rule_based_labeling()
+        self.temporal_pattern_labeling()
+        
+        # Risk seviyelerini sayısal değerlere çevir
+        risk_mapping = {'düşük': 0, 'normal': 1, 'riskli': 2, 'kritik': 3}
+        
+        self.df['RealisticScore_Numeric'] = self.df['RealisticLabel'].map(risk_mapping)
+        self.df['RuleBasedScore_Numeric'] = self.df['RuleBasedLabel'].map(risk_mapping)
+        self.df['TemporalScore_Numeric'] = self.df['TemporalLabel'].map(risk_mapping)
         
         def assign_hybrid_label(row):
-            # Her yöntemden skorları al
-            realistic = row['RealisticLabel']
-            rule_based = row['RuleBasedLabel']
-            temporal = row['TemporalLabel']
-            
-            # Risk seviyelerini sayısal değerlere çevir
-            risk_mapping = {'düşük': 0, 'normal': 1, 'riskli': 2, 'kritik': 3}
-            realistic_score = risk_mapping[realistic]
-            rule_score = risk_mapping[rule_based]
-            temporal_score = risk_mapping[temporal]
-            
+            # Ağırlıklı ortalama hesapla
             hybrid_score = (
-                realistic_score * 0.4 +
-                rule_score * 0.3 +
-                temporal_score * 0.3
+                row['RealisticScore_Numeric'] * 0.4 +
+                row['RuleBasedScore_Numeric'] * 0.3 +
+                row['TemporalScore_Numeric'] * 0.3
             )
-    
-            max_risk = max(realistic_score, rule_score, temporal_score)
-
-            if max_risk >= 3:  # Kritik
+            
+            # En yüksek riski korumak için max(ağırlıklı ortalama, max_skor_yüzdesi)
+            max_numeric_score = max(row['RealisticScore_Numeric'], row['RuleBasedScore_Numeric'], row['TemporalScore_Numeric'])
+            
+            if max_numeric_score == 3:
                 final_score = max(hybrid_score, 2.5)
-            elif max_risk >= 2:  # Riskli
+            elif max_numeric_score == 2:
                 final_score = max(hybrid_score, 1.5)
             else:
                 final_score = hybrid_score
-            
+                
             if final_score >= 2.5:
                 return 'kritik'
             elif final_score >= 1.5:
@@ -211,12 +192,9 @@ class LabelingMethods:
         
         self.df['HybridLabel'] = self.df.apply(assign_hybrid_label, axis=1)
         
-        # Dağılımı göster
         distribution = self.df['HybridLabel'].value_counts(normalize=True) * 100
-        print("Dağılım:")
+        print("Hibrit Etiket Dağılımı:")
         for label, percentage in distribution.items():
-            print(f"  {label}: %{percentage:.1f}")
-        
+            print(f"    {label}: %{percentage:.1f}")
+            
         return self.df['HybridLabel']
-    
-  
