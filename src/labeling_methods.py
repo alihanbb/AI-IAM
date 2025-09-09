@@ -32,31 +32,37 @@ class LabelingMethods:
         return temp_df
     
     def realistic_labeling(self):
-        print("🎯 Yöntem 1: Gerçekçi Etiketleme uygulanıyor...")
+        print("🎯 Yöntem 1: Gerçekçi Etiketleme uygulanıyor (Yeniden Yapılandırıldı)...")
         
         if 'RiskScore' not in self.df.columns:
             return pd.Series(['normal'] * len(self.df))
         
-        # Quantile eşikleri ile gerçekçi dağılım
-        quantiles = self.df['RiskScore'].quantile([0.07, 0.18, 0.40])
-        q_critical, q_risky, q_normal = quantiles.values
+        # Risk piramidine uygun mantıksal kuantil eşikleri tanımla
+        # Örnek: %20'si 'düşük', %60'ı 'normal', %15'i 'riskli', %5'i 'kritik' olsun.
+        # Bu oranlar verinizin doğasına göre ayarlanabilir.
+        quantiles = self.df['RiskScore'].quantile([0.20, 0.80, 0.95])
+        q_low, q_normal, q_risky = quantiles.values
         
         def assign_realistic_label(score):
-            if score <= q_critical:
+            if score <= q_low:
+                # En düşük %20'lik dilim 'düşük' olarak etiketlenir.
                 return 'düşük'
-            elif score <= q_risky:
-                return 'normal'
             elif score <= q_normal:
+                # %20 ile %80 arasındaki dilim (%60'lık en geniş kısım) 'normal' olarak etiketlenir.
+                return 'normal'
+            elif score <= q_risky:
+                # %80 ile %95 arasındaki dilim (%15'lik kısım) 'riskli' olarak etiketlenir.
                 return 'riskli'
             else:
+                # En yüksek %5'lik dilim 'kritik' olarak etiketlenir.
                 return 'kritik'
         
         self.df['RealisticLabel'] = self.df['RiskScore'].apply(assign_realistic_label)
         
         distribution = self.df['RealisticLabel'].value_counts(normalize=True) * 100
-        print("Dağılım:")
+        print("Yeni Dağılım:")
         for label, percentage in distribution.items():
-            print(f"    {label}: %{percentage:.1f}")
+            print(f"      {label}: %{percentage:.1f}")
             
         return self.df['RealisticLabel']
 
@@ -150,19 +156,15 @@ class LabelingMethods:
 
     def hybrid_labeling(self):
         print("🧠 Yöntem 4: Hibrit Etiketleme uygulanıyor...")
-        
         # Önce bağımsız etiketleme yöntemlerini uygula
         self.realistic_labeling()
         self.rule_based_labeling()
         self.temporal_pattern_labeling()
-        
         # Risk seviyelerini sayısal değerlere çevir
         risk_mapping = {'düşük': 0, 'normal': 1, 'riskli': 2, 'kritik': 3}
-        
         self.df['RealisticScore_Numeric'] = self.df['RealisticLabel'].map(risk_mapping)
         self.df['RuleBasedScore_Numeric'] = self.df['RuleBasedLabel'].map(risk_mapping)
         self.df['TemporalScore_Numeric'] = self.df['TemporalLabel'].map(risk_mapping)
-        
         def assign_hybrid_label(row):
             # Ağırlıklı ortalama hesapla
             hybrid_score = (
@@ -170,10 +172,8 @@ class LabelingMethods:
                 row['RuleBasedScore_Numeric'] * 0.3 +
                 row['TemporalScore_Numeric'] * 0.3
             )
-            
             # En yüksek riski korumak için max(ağırlıklı ortalama, max_skor_yüzdesi)
             max_numeric_score = max(row['RealisticScore_Numeric'], row['RuleBasedScore_Numeric'], row['TemporalScore_Numeric'])
-            
             if max_numeric_score == 3:
                 final_score = max(hybrid_score, 2.5)
             elif max_numeric_score == 2:
